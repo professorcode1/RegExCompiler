@@ -13,6 +13,18 @@ public:
 };
 int Node::id_generator = 0;
 
+class DFANode{
+public:
+    int _id;
+    map< char, DFANode* > children;
+    bool m_finalState;
+    static int id_generator;
+
+    DFANode():_id{id_generator++}, m_finalState{false}{};
+    DFANode(bool state):_id{id_generator++}, m_finalState{state}{};
+};
+int DFANode::id_generator = 11;
+
 
 typedef enum class RegularExpresssionSubstring{
     SIMPLE,
@@ -277,29 +289,29 @@ void epsilon_nfa_to_nfa(Node* start, Node* end, const vector<char> &regExInputSe
     }
 }
 
-Node* dfa_from_nfa(Node* start, vector<char> &regExInputSet){
+DFANode* dfa_from_nfa(Node* start, vector<char> &regExInputSet){
     map<Node*, map< char, vector <Node*> > >  graph(breath_first_Nodes(start));
-    stack<Node*> to_check;
-    map<Node*, set<Node*> > newNodes;
-    Node *dfa_Start= new Node() , *deadState = nullptr;
+    stack<DFANode*> to_check;
+    map<DFANode*, set<Node*> > newNodes;
+    DFANode *dfa_Start= new DFANode() , *deadState = nullptr;
     newNodes.insert(make_pair(dfa_Start, set<Node*>({start})));
     to_check.push(dfa_Start);
-    auto nodeExists = [&newNodes](const set<Node*> &old_nodes_set)->Node*{
+    auto nodeExists = [&newNodes](const set<Node*> &old_nodes_set)->DFANode*{
         for(auto [newNode, oldNodes] : newNodes ){
             if(oldNodes == old_nodes_set)
                 return newNode;
         }
         return nullptr;
     };
-    auto createDeadstate = [&regExInputSet]() -> Node*{
-        Node* deadState = new Node();
+    auto createDeadstate = [&regExInputSet]() -> DFANode*{
+        DFANode* deadState = new DFANode();
         for_each(regExInputSet.begin(),regExInputSet.end(), [&deadState](char regExInput){
-            deadState->children[regExInput].push_back(deadState);
+            deadState->children[regExInput] = deadState;
         });
         return deadState;
     };
     while(!to_check.empty()){
-        Node* top_node = to_check.top();
+        DFANode* top_node = to_check.top();
         // cout<<top_node->_id<<endl;
         to_check.pop();
         for_each(regExInputSet.begin(), regExInputSet.end(), [&](char regExInput){
@@ -307,7 +319,7 @@ Node* dfa_from_nfa(Node* start, vector<char> &regExInputSet){
             for_each(newNodes[top_node].begin(),newNodes[top_node].end(),[&](Node* oldNode){
                 intersections.insert(graph[oldNode][regExInput].begin(), graph[oldNode][regExInput].end());
             });
-            Node* neighbor;
+            DFANode* neighbor;
             if(intersections.empty()){
                 if(deadState == nullptr){
                     deadState = createDeadstate();
@@ -317,14 +329,14 @@ Node* dfa_from_nfa(Node* start, vector<char> &regExInputSet){
                 neighbor = nodeExists(intersections);
             }
             if(neighbor == nullptr){
-                neighbor = new Node();
+                neighbor = new DFANode();
                 newNodes[neighbor] = intersections;
                 to_check.push(neighbor);
             }
-            top_node->children[regExInput].push_back(neighbor);
+            top_node->children[regExInput] = neighbor;
         });
     }
-    for_each(newNodes.begin(), newNodes.end(), [](pair<Node*, set<Node*> > data){
+    for_each(newNodes.begin(), newNodes.end(), [](pair<DFANode*, set<Node*> > data){
         data.first->m_finalState = accumulate(data.second.begin(), data.second.end(), false, [](bool total, Node* current) -> bool {
             return total || current->m_finalState;
         });
@@ -332,18 +344,178 @@ Node* dfa_from_nfa(Node* start, vector<char> &regExInputSet){
     return dfa_Start;
 }
 
-int main(){
+map<DFANode*, map<char, DFANode*> > breath_first_DFANode(DFANode* start, bool clear = false){
+    deque<DFANode*> st;
+    st.push_back(start);
+    set<DFANode*> visited;
+    map<DFANode*, map< char, DFANode* > > ans;
+    while(!st.empty()){
+        DFANode* hlpr = st.front();
+        st.pop_front();
+        visited.insert(hlpr);
+        for_each(hlpr->children.begin(), hlpr->children.end(), [&st, &visited](pair<char, DFANode* > p){
+            if(visited.find(p.second) == visited.end() && find(st.begin(), st.end(), p.second) == st.end())
+                st.push_back(p.second);
+        });
+        if(clear)
+            ans.insert(make_pair(hlpr, move(hlpr->children) ));
+        else
+            ans.insert(make_pair(hlpr, hlpr->children));
+    }
+    return ans;
+}
+
+void print_dfa(DFANode* start){
+    if(start == nullptr){
+        cout<<"EMPTY DFA"<<endl;
+        return ;
+    }
+    auto graph = breath_first_DFANode(start);
+    for_each(graph.begin(), graph.end(), [](pair<DFANode*, map<char, DFANode*> > data){
+        cout<<data.first->_id<<'\t'<<(data.first->m_finalState ? "F" : "T")<<endl;
+        for_each(data.second.begin(), data.second.end(),[](pair<char, DFANode*> data_){
+            cout<<data_.first<<" "<<data_.second->_id<<"\t";
+        });
+        cout<<endl;
+    });
+}
+
+DFANode* minimise_dfa(DFANode *start, vector<char> &regExInputSet){
+    map<DFANode*, map<char, DFANode*> > graph = breath_first_DFANode(start);
+    int start_size = graph.size();
+    vector<set<DFANode*> > prev, next;
+    next.emplace_back();
+    next.emplace_back();
+    for_each(graph.begin(), graph.end(), [&next](pair<DFANode*, map<char, DFANode*> > data){
+        if(data.first->m_finalState)
+            next[1].insert(data.first);
+        else
+            next[0].insert(data.first);
+    });
+    int regExInputSet_mod = regExInputSet.size();
+    auto getIndex = [&prev](DFANode* node) -> int {
+        for(int iter_i = 0 ; iter_i < prev.size() ; iter_i++){
+            if(prev[iter_i].find(node) != prev[iter_i].end()){
+                return iter_i;
+            }
+        }
+        return -1; //should not get here
+    };
+    int equivalnce = 0;        
+    auto print_next = [&next](){
+        cout<<"NEXT"<<endl;
+        for_each(next.begin(), next.end(), [](set<DFANode*> data){
+            for_each(data.begin(), data.end(), [](DFANode* node){cout<<node->_id<<" ";});
+            cout<<endl;
+        });
+    };
+    vector< pair < DFANode*, vector<int> > > hlpr;
+    auto print_hlpr = [&hlpr](){
+        cout<<"HLPR"<<endl;
+        for_each(hlpr.begin(), hlpr.end(), []( const pair < DFANode*, vector<int> > &data ){
+            cout<<data.first->_id<<endl;
+            for_each(data.second.begin(), data.second.end(), [](int data_){
+                cout<<data_<<"\t";
+            });
+            cout<<endl;
+        });
+    };
+    auto both_nodes_same_partition = [&prev](DFANode* first, DFANode* second) -> bool {
+        for(const auto &sety : prev){
+            if(sety.find(first) != sety.end() && sety.find(second) != sety.end())
+                return true;
+        }
+        return false;
+    };
+    while(true){
+        equivalnce++;
+        hlpr.clear();
+        cout<<"Creating "<<equivalnce<<" Equivalnce"<<endl;
+        prev = move(next);
+        transform(graph.begin(), graph.end(), inserter(hlpr, hlpr.begin()), [&](pair<DFANode*, map<char, DFANode*> > data) -> pair<DFANode*, vector<int> >{
+            vector<int> indexs(regExInputSet_mod);
+            int indexs_index = 0;
+            for_each(regExInputSet.begin(), regExInputSet.end(), [&](char regExInput){
+                indexs[indexs_index] = getIndex(data.second[regExInput]);
+                indexs_index++;
+            });
+            return make_pair(data.first, indexs);
+        });
+        sort(hlpr.begin(), hlpr.end(), [](const pair < DFANode*, vector<int> > &left,const pair < DFANode*, vector<int> > &right){return left.second < right.second;});
+        next.emplace_back();
+        next[0].insert(hlpr.front().first);
+        int hlpr_index = 0;
+        for_each(hlpr.begin() + 1, hlpr.end(), [&](const pair < DFANode*, vector<int> > &data){
+            if(data.second == hlpr[hlpr_index].second && both_nodes_same_partition(data.first, hlpr[hlpr_index].first)){
+                next.back().insert(data.first);
+            }else{
+                next.push_back(set<DFANode*>({data.first}));
+            }
+            hlpr_index++;
+        });
+        sort(next.begin(), next.end());
+        // print_hlpr();
+        // print_next();
+        if(next == prev)
+            break;
+    }
+    // print_next();
+    int final_size = next.size();
+    if(final_size == start_size){
+        cout<<"The DFA was already minimal, returning original DFA"<<endl;
+        return start;
+    }else{
+        cout<<"Size improvment :: from->"<<start_size<<"\t to->"<<final_size<<endl;
+    }
+    DFANode **node_arr = new DFANode*   [final_size];
+    for(int iter_i = 0 ; iter_i < final_size ; iter_i++){
+        node_arr[iter_i] = new DFANode(accumulate(prev[iter_i].begin(), prev[iter_i].end(), false, [](bool total, DFANode* current){
+            return total || current->m_finalState;
+        }));
+    }
+    for(int iter_i = 0 ; iter_i < final_size ; iter_i++){
+        for_each(regExInputSet.begin(), regExInputSet.end(), [&](char regExInput){
+            node_arr[iter_i]->children[regExInput] = node_arr[getIndex((*(prev[iter_i].begin()))->children[regExInput])];
+        });
+    }
+    return node_arr[getIndex(start)];
+}
+
+bool matchRegEx(char *input, DFANode* start){
+    DFANode *node = start;
+    for(int iter_i = 0; iter_i < strlen(input) ; iter_i++){
+        if(node->children.find(input[iter_i]) == node->children.end()){
+            cout<<"Input string contains character outside the character set "<<endl;
+            return false;
+        }
+        node = node->children[input[iter_i]];
+    }
+    return node->m_finalState;
+}
+
+int main(int argc, char* argv[]){
     string input = "(a|b)*abb";
     vector<char> regExInputSet({'a', 'b'});
     Node *start = new Node(), *end = new Node(true);
     parse(input, 0, input.length(), start, end); //convertes regex with only |, * and () as special characters into epsilon nfa in graph format
-    cout<<"Epsilon NFA"<<endl;
-    print_epsilon_nfa_bf(start);
+    //does no error checking, invalid strings will cause UD
+    
+    // cout<<endl<<"Epsilon NFA"<<endl;
+    // print_epsilon_nfa_bf(start);
     epsilon_nfa_to_nfa(start, end, regExInputSet);
-    cout<<"NFA"<<endl;
-    print_epsilon_nfa_bf(start);
-    Node* dfa = dfa_from_nfa(start, regExInputSet);
-    cout<<"DFA"<<endl;
-    print_epsilon_nfa_bf(dfa);
+    // cout<<endl<<"NFA"<<endl;
+    // print_epsilon_nfa_bf(start);
+    DFANode* dfa = dfa_from_nfa(start, regExInputSet);
+    // cout<<endl<<"DFA"<<endl;
+    // print_dfa(dfa);
+    DFANode* minimal_dfa = minimise_dfa(dfa, regExInputSet);
+    // cout<<endl<<"Minimised DFA"<<endl;
+    // print_dfa(minimal_dfa);
+    if(argc == 1){
+        cout<<"Enter the strings as terminal input to check them against regEx"<<endl;
+    }
+    for(int iter_arg = 1 ; iter_arg < argc ; iter_arg++){
+        cout<<argv[iter_arg]<<"\t"<<(matchRegEx(argv[iter_arg], minimal_dfa) ? "Valid" : "Invalid")<<endl;
+    }
     return 0;
 }

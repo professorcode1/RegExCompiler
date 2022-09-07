@@ -1,2 +1,2 @@
- g++ -std=c++17 minimise_dfa.cpp -o main
+ g++ -std=c++17 regEx.cpp -o main
  
